@@ -10,6 +10,7 @@
 #define COLOR_YELLOW  "\033[1;33m"
 #define COLOR_MAGENTA "\033[1;35m"
 #define COLOR_CYAN    "\033[1;36m"
+#define COLOR_BEIGE "\033[38;5;230m"
 
 const char* TASK_COLORS[] = {
     COLOR_BLUE, COLOR_RED, COLOR_GREEN, 
