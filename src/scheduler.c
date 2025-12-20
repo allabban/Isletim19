@@ -4,13 +4,18 @@
 #include "scheduler.h"
 
 #define MAX_TASKS 100
-#define TIMEOUT_WINDOW 20   // seconds
+#define TIMEOUT_WINDOW 20  
 
 SimulationTask taskList[MAX_TASKS];
 int taskCount = 0;
 int globalTimer = 0;
 
 static int lastRRIndex = -1;
+
+static int statDroppedTasks = 0;      
+static int statCompletedTasks = 0;    
+static long statTotalTurnaround = 0;  
+static long statTotalWaiting = 0;     
 
 void loadTasks(const char* filename) {
     FILE *file = fopen(filename, "r");
@@ -33,7 +38,6 @@ void loadTasks(const char* filename) {
         taskList[taskCount].arrivalTimestamp = -1;
         taskList[taskCount].hasStarted = 0;
 
-        // If it never runs, it times out arrival + 20
         taskList[taskCount].deadline = taskList[taskCount].arrivalTime + TIMEOUT_WINDOW;
 
         strcpy(taskList[taskCount].name, "proses");
@@ -48,6 +52,9 @@ static void checkGlobalTimeouts(void) {
         if (taskList[i].handle != NULL && taskList[i].remainingTime > 0) {
             if (globalTimer >= taskList[i].deadline) {
                 printTaskLog(&taskList[i], "zamanaşımı");
+                
+                statDroppedTasks++; 
+
                 vTaskDelete(taskList[i].handle);
                 taskList[i].handle = NULL;
             }
@@ -105,7 +112,6 @@ void vSchedulerTask(void *pvParameters) {
     (void) pvParameters;
 
     for (;;) {
-        // Admit arrivals at this second
         for (int i = 0; i < taskCount; i++) {
             if (taskList[i].arrivalTime == globalTimer) {
                 xTaskCreate(vTaskGenericFunction,
@@ -124,7 +130,6 @@ void vSchedulerTask(void *pvParameters) {
         SimulationTask *current = selectNextTask();
 
         if (current != NULL) {
-            // Print state at time T
             if (current->hasStarted == 0) {
                 printTaskLog(current, "başladı");
                 current->hasStarted = 1;
@@ -132,47 +137,70 @@ void vSchedulerTask(void *pvParameters) {
                 printTaskLog(current, "yürütülüyor");
             }
 
-            // Print timeouts at time T (same style as report)
             checkGlobalTimeouts();
 
-            // Run one second
             vTaskResume(current->handle);
             vTaskDelay(pdMS_TO_TICKS(1000));
             vTaskSuspend(current->handle);
 
-            // Advance time to T+1
             globalTimer++;
             current->remainingTime--;
 
             if (current->remainingTime <= 0) {
                 printTaskLog(current, "sonlandı");
+                
+                statCompletedTasks++;
+                int turnaround = globalTimer - current->arrivalTime;
+                int waiting = turnaround - current->burstTime;
+                
+                statTotalTurnaround += turnaround;
+                statTotalWaiting += waiting;
+                // ----------------------------------------
+
                 vTaskDelete(current->handle);
                 current->handle = NULL;
             } else {
-                // KEY FIX: after getting CPU, reset timeout window
                 current->deadline = globalTimer + TIMEOUT_WINDOW;
 
-                // KEY FIX: askıda allowed up to priority 5, and increment before printing
                 if (current->priority > 0 && current->priority < 5) {
                     current->priority++;
                     printTaskLog(current, "askıda");
                 }
             }
         } else {
-            // Idle second
             checkGlobalTimeouts();
             vTaskDelay(pdMS_TO_TICKS(1000));
             globalTimer++;
         }
 
-        // Stop condition
         int allDone = 1;
         for (int i = 0; i < taskCount; i++) {
             if (taskList[i].arrivalTime > globalTimer) { allDone = 0; break; }
             if (taskList[i].handle != NULL && taskList[i].remainingTime > 0) { allDone = 0; break; }
         }
+        
         if (allDone) {
-            printf("Simulasyon Tamamlandi.\n");
+            printf("\nSimulasyon Tamamlandi.\n");
+            printf("--------------------------------------------------\n");
+            printf("             SIMULATION SUMMARY                   \n");
+            printf("--------------------------------------------------\n");
+            printf("Total Simulation Time  : %d seconds\n", globalTimer);
+            printf("Total Tasks Processed  : %d\n", taskCount);
+            printf("Tasks Completed        : %d\n", statCompletedTasks);
+            printf("Tasks Dropped (Timeout): %d\n", statDroppedTasks);
+            
+            if (statCompletedTasks > 0) {
+                double avgTurnaround = (double)statTotalTurnaround / statCompletedTasks;
+                double avgWaiting = (double)statTotalWaiting / statCompletedTasks;
+                
+                printf("Avg Turnaround Time    : %.2f sec\n", avgTurnaround);
+                printf("Avg Waiting Time       : %.2f sec\n", avgWaiting);
+            } else {
+                printf("Avg Turnaround Time    : N/A\n");
+                printf("Avg Waiting Time       : N/A\n");
+            }
+            printf("--------------------------------------------------\n");
+            
             exit(0);
         }
     }
